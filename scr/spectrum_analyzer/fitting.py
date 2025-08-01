@@ -117,7 +117,6 @@ def num_params(peak_type):
         'voigt': 4
     }.get(peak_type, None)
 
-
 def fit_multiple_peaks(x, y, peak_type, n_peaks, p0=None, bounds=None):
     """
     Fit multiple peaks of the same type to the data.
@@ -154,6 +153,8 @@ def fit_multiple_peaks(x, y, peak_type, n_peaks, p0=None, bounds=None):
             return lorentzian(x, *params)
         elif peak_type == 'voigt':
             return voigt(x, *params)
+        else:
+            raise ValueError(f"Unsupported peak type: {peak_type}")
 
     def composite_model(x, *params):
         y_total = np.zeros_like(x)
@@ -174,5 +175,9 @@ def fit_multiple_peaks(x, y, peak_type, n_peaks, p0=None, bounds=None):
         if len(bounds[0]) != expected_param_len or len(bounds[1]) != expected_param_len:
             raise ValueError("Each bound list must have length equal to total number of parameters.")
 
-    popt, pcov = curve_fit(composite_model, x, y, p0=p0, bounds=bounds)
+    if bounds is None:
+        popt, pcov = curve_fit(composite_model, x, y, p0=p0)
+    else:
+        popt, pcov = curve_fit(composite_model, x, y, p0=p0, bounds=bounds)
+
     return popt, pcov
