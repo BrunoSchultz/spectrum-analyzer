@@ -6,9 +6,13 @@ import matplotlib.cm as cm
 import pandas as pd
 import string
 from fitting import fit_peaks
+import warnings
+from scipy.optimize import OptimizeWarning
+import scienceplots
+plt.style.use(['science', 'no-latex'])  # prettier scientific style
 
 class FitResult:
-    def __init__(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index):
+    def __init__(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min=None, x_max=None):
         """
         Create a fitting result for one multi-peak fit.
 
@@ -29,9 +33,11 @@ class FitResult:
         fit_index : int
             Sequential index used for naming (e.g., 1, 2a, 2b)
         """
-        self.df = self._format_result(params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index)
+        self.df = self._format_result(params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min, x_max)
+        self.x_min = x_min
+        self.x_max = x_max
 
-    def _format_result(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index):
+    def _format_result(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min, x_max):
         if peak_type in ['gaussian', 'lorentzian']:
             group_size = 3
             columns = ['amp', 'cen', 'wid']
@@ -53,6 +59,8 @@ class FitResult:
                 'type': peak_type,
                 'bg_type': bg_type,
                 'bg_coeffs': bg_coeffs,
+                'x_min': x_min,
+                'x_max': x_max
             }
             # Add parameters
             row.update(dict(zip(columns, param_set)))
@@ -75,7 +83,7 @@ class FitResult:
             return self.df
         else:
             # Hide background and error columns unless full=True
-            return self.df.drop(columns=['bg_type', 'bg_coeffs', 'errors'], errors='ignore')
+            return self.df.drop(columns=['bg_type', 'bg_coeffs'], errors='ignore')
 
 
 class Spectrum:
@@ -85,7 +93,7 @@ class Spectrum:
         self.filepath = filepath
         self.fitted_peaks = pd.DataFrame(columns=[
             'peak_id', 'type', 'amp', 'cen', 'wid', 'sigma', 'gamma',
-            'bg_type', 'bg_coeffs', 'errors'
+            'bg_type', 'bg_coeffs'
         ])
         if filepath:
             self.load_spectrum(filepath)
@@ -224,7 +232,6 @@ class Spectrum:
             raise ValueError(f"Peak ID '{peak_id}' not found in fitted peaks.")
 
     def fit_peaks(self, x_min=None, x_max=None, peak_type='gaussian', n_peaks=1, bg_type='constant', bg_coeffs=[0.0], initial_params=None):
-
         x, y = self.x, self.y
 
         if x_min is not None or x_max is not None:
@@ -233,17 +240,25 @@ class Spectrum:
                 raise ValueError("No data available in the specified range.")
             x, y = segment.x, segment.y
 
-        popt, pcov, _ = fit_peaks(x, y, peak_type=peak_type, n_peaks=n_peaks, bg_type=bg_type, bg_coeffs=bg_coeffs, initial_params=initial_params)
-        
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always", OptimizeWarning)  # Catch OptimizeWarning
+            
+            popt, pcov, _ = fit_peaks(x, y, peak_type=peak_type, n_peaks=n_peaks, bg_type=bg_type, bg_coeffs=bg_coeffs, initial_params=initial_params)
+
+            # Check if an OptimizeWarning was raised
+            if any(issubclass(warning.category, OptimizeWarning) for warning in w):
+                print("Warning: Covariance of the parameters could not be estimated. Fit result not added.")
+                return None  # Or raise, or handle differently
+
         errors = np.sqrt(np.diag(pcov))
         fit_index = self._fit_count
         self._fit_count += 1
 
-        fit_result = FitResult(popt, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index)
-        self.add_fitted_peak(fit_result)
-        
-        return fit_result
+        fit_result = FitResult(popt, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min, x_max)
 
+        self.add_fitted_peak(fit_result)
+
+        return fit_result
 
     def export_fitted_peaks(self, out_path):
         """
@@ -253,155 +268,223 @@ class Spectrum:
         print(f"Fitted peak data exported to {out_path}")
 
 
-    def plot(self, x_min=None, x_max=None, title="Spectrum", xlabel="x", ylabel="y", 
-            color='blue', lw=1.5, show=True, save_path=None, figsize=(10, 6), **kwargs):
+    def plot(self, x_min=None, x_max=None, 
+             title=None, xlabel="$x$", ylabel="$y$",
+             color='blue', lw=1.5, 
+             show=True, save_path=None, dpi=700,
+             legend=False, figsize=(6, 4),
+             ax=None, fig=None,
+             **kwargs):
         """
-        Plot the full spectrum or a selected segment.
+        Plot the full spectrum or a selected segment with customizable styling.
 
         Parameters
         ----------
-        x_min : float or None
-            Minimum x-value to plot.
-        x_max : float or None
-            Maximum x-value to plot.
-        title : str
-            Plot title.
-        xlabel : str
-            Label for x-axis.
-        ylabel : str
-            Label for y-axis.
+        x_min, x_max : float or None
+            Limits of x data to plot.
+        title : str or None
+            Plot title. Default None (no title).
+        xlabel, ylabel : str
+            Axis labels.
         color : str
             Line color.
         lw : float
             Line width.
         show : bool
-            Whether to display the plot.
+            Whether to show the plot interactively.
         save_path : str or None
-            Path to save the plot image. If None, it won’t save.
+            File path to save figure. If None, no file saved.
+        dpi : int
+            Resolution of saved figure.
+        legend : bool
+            Whether to show legend. Default False.
         figsize : tuple
-            Figure size.
+            Figure size in inches.
+        ax : matplotlib.axes.Axes or None
+            Axes to plot on; if None, creates new figure and axes.
+        fig : matplotlib.figure.Figure or None
+            Figure instance; only used if ax is None.
         kwargs : dict
-            Additional keyword arguments for plt.plot().
+            Additional keyword args passed to plt.plot()
         """
+
         if self.x is None or self.y is None:
             raise ValueError("No data loaded in the Spectrum object.")
 
         segment = self.get_segment(x_min, x_max)
 
-        plt.figure(figsize=figsize)
-        plt.plot(segment.x, segment.y, color=color, lw=lw, **kwargs)
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.grid(True)
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+
+        ax.plot(segment.x, segment.y, color=color, lw=lw, **kwargs)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.grid(True)
+
+        if title is not None:
+            ax.set_title(title)
+
+        if legend:
+            ax.legend()
 
         if save_path:
-            plt.savefig(save_path, dpi=300)
+            fig.savefig(save_path, dpi=dpi)
             print(f"Plot saved to {save_path}")
 
         if show:
             plt.show()
         else:
-            plt.close()
+            plt.close(fig)
 
-    def plot_fit_overlay(
-        self,
-        x_min=None,
-        x_max=None,
-        show_individual_peaks=True,
-        show_total_fit=True,
-        title="Fitted Spectrum Overlay",
-        xlabel="x",
-        ylabel="y",
-        colors=None,
-        figsize=(10, 6),
-        save_path=None,
-        show=True,
-        **kwargs
-    ):
+
+    def plot_fit_overlay(self, x_min=None, x_max=None,
+                         show_individual_peaks=True,
+                         show_total_fit=True,
+                         title=None, xlabel="$x$", ylabel="$y$",
+                         colors=None,
+                         figsize=(6, 4), dpi=700,
+                         save_path=None, show=True,
+                         legend=False,
+                         fig=None, ax=None,
+                         **kwargs):
+        """
+        Plot the spectrum with fitted peak overlays, customizable with keyword arguments.
+
+        Parameters
+        ----------
+        x_min, x_max : float or None
+            Plot x limits.
+        show_individual_peaks : bool
+            Plot each individual peak.
+        show_total_fit : bool
+            Plot the total fit sum.
+        title : str or None
+            Plot title.
+        xlabel, ylabel : str
+            Axis labels.
+        colors : matplotlib colormap or None
+            Colormap for peaks.
+        figsize : tuple
+            Figure size.
+        dpi : int
+            Save dpi.
+        save_path : str or None
+            File path to save figure.
+        show : bool
+            Show figure interactively.
+        legend : bool
+            Show legend.
+        fig : matplotlib.figure.Figure or None
+            Figure to plot on.
+        ax : matplotlib.axes.Axes or None
+            Axes to plot on.
+        kwargs : dict
+            Extra kwargs passed to plot calls.
+        """
         if self.x is None or self.y is None:
             raise ValueError("No data loaded in the Spectrum object.")
         if self.fitted_peaks.empty:
             raise ValueError("No fitted peaks to overlay.")
 
-        # Subset the region
-        segment = self.get_segment(x_min, x_max)
-        x = segment.x
-        y = segment.y
+        # Prepare axes
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
 
-        # Plot base data
-        plt.figure(figsize=figsize)
-        plt.plot(x, y, label="Original Spectrum", lw=1.5, color="black")
+        # Mask for plot range
+        mask = np.ones_like(self.x, dtype=bool)
+        if x_min is not None:
+            mask &= self.x >= x_min
+        if x_max is not None:
+            mask &= self.x <= x_max
 
-        # Get unique fit groupings
-        peak_groups = self.fitted_peaks.groupby("peak_id").groups
-        fit_results = []
+        x_base = self.x[mask]
+        y_base = self.y[mask]
 
-        # Regroup peak IDs into fit groups using shared base id (e.g. '2a', '2b' => '2')
+        ax.plot(x_base, y_base, label="Original Spectrum", lw=1.5, color="black", **kwargs)
+
         def get_fit_base(pid):
             return ''.join([c for c in pid if not c.isalpha()])
-        
+
         group_map = {}
         for _, row in self.fitted_peaks.iterrows():
             base_id = get_fit_base(row['peak_id'])
             group_map.setdefault(base_id, []).append(row)
 
-        colormap = colors or cm.get_cmap('tab10')
+        colormap = colors or plt.cm.get_cmap('tab10')
+
         for i, (fit_index, rows) in enumerate(group_map.items()):
             rows = pd.DataFrame(rows)
             peak_type = rows.iloc[0]['type']
             bg_type = rows.iloc[0]['bg_type']
             bg_coeffs = rows.iloc[0]['bg_coeffs']
-            if isinstance(bg_coeffs, str):
-                import ast
-                bg_coeffs = ast.literal_eval(bg_coeffs)
+            x_min_fit = rows.iloc[0].get('x_min', None)
+            x_max_fit = rows.iloc[0].get('x_max', None)
+
+            plot_min = x_min if x_min is not None else -np.inf
+            plot_max = x_max if x_max is not None else np.inf
+            fit_min = x_min_fit if x_min_fit is not None else -np.inf
+            fit_max = x_max_fit if x_max_fit is not None else np.inf
+
+            if fit_max < plot_min or fit_min > plot_max:
+                continue
+
+            fit_mask = (self.x >= max(plot_min, fit_min)) & (self.x <= min(plot_max, fit_max))
+
+            x_fit = self.x[fit_mask]
+            if len(x_fit) == 0:
+                continue
 
             color = colormap(i % 10)
+            total_fit = np.zeros_like(x_fit, dtype=float)
 
-            total_fit = np.zeros_like(x, dtype=float)
             for _, peak in rows.iterrows():
                 if peak_type == 'gaussian':
-                    fit = peak['amp'] * np.exp(-((x - peak['cen']) ** 2) / (2 * peak['wid'] ** 2))
+                    fit = peak['amp'] * np.exp(-((x_fit - peak['cen']) ** 2) / (2 * peak['wid'] ** 2))
                 elif peak_type == 'lorentzian':
-                    fit = peak['amp'] / (1 + ((x - peak['cen']) / peak['wid']) ** 2)
+                    fit = peak['amp'] / (1 + ((x_fit - peak['cen']) / peak['wid']) ** 2)
                 elif peak_type == 'voigt':
                     from scipy.special import wofz
                     sigma = peak['sigma']
                     gamma = peak['gamma']
-                    z = ((x - peak['cen']) + 1j * gamma) / (sigma * np.sqrt(2))
+                    z = ((x_fit - peak['cen']) + 1j * gamma) / (sigma * np.sqrt(2))
                     fit = peak['amp'] * np.real(wofz(z)) / (sigma * np.sqrt(2 * np.pi))
                 else:
                     raise ValueError(f"Unsupported peak type: {peak_type}")
+                
+                # Background
+                if bg_type == 'constant':
+                    bg = np.full_like(x_fit, bg_coeffs[0])
+                elif bg_type == 'linear':
+                    bg = bg_coeffs[0] + bg_coeffs[1] * x_fit
+                elif bg_type == 'cubic':
+                    bg = np.polyval(bg_coeffs, x_fit)
+                else:
+                    raise ValueError(f"Unsupported background type: {bg_type}")
 
                 if show_individual_peaks:
-                    plt.plot(x, fit, linestyle='--', color=color, alpha=0.7, label=f"Peak {peak['peak_id']}")
+                    ax.plot(x_fit, fit + bg, linestyle='--', color=color, alpha=0.7, label=f"Peak {peak['peak_id']}", **kwargs)
 
                 total_fit += fit
-
-            # Add background
-            if bg_type == 'constant':
-                bg = np.full_like(x, bg_coeffs[0])
-            elif bg_type == 'linear':
-                bg = bg_coeffs[0] + bg_coeffs[1] * x
-            else:
-                raise ValueError(f"Unsupported background type: {bg_type}")
 
             total_fit += bg
 
             if show_total_fit:
-                plt.plot(x, total_fit, color=color, lw=2.0, label=f"Total Fit {fit_index}")
+                ax.plot(x_fit, total_fit, color=color, lw=2.0, label=f"Total Fit {fit_index}", **kwargs)
 
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.legend()
-        plt.grid(True)
+        if title is not None:
+            ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.grid(True)
+
+        if legend:
+            ax.legend()
 
         if save_path:
-            plt.savefig(save_path, dpi=300)
+            fig.savefig(save_path, dpi=dpi)
             print(f"Overlay plot saved to {save_path}")
 
         if show:
             plt.show()
         else:
-            plt.close()
+            plt.close(fig)

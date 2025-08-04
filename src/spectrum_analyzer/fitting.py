@@ -95,7 +95,7 @@ def fit_peaks(x, y, peak_type='gaussian', n_peaks=1, bg_type='constant', bg_coef
                 initial_params += [amp, cen, sigma, gamma]
 
     # First fit
-    popt, _ = curve_fit(model, x, y, p0=initial_params, maxfev=3000)
+    popt, _ = curve_fit(model, x, y, p0=initial_params, maxfev=10000)
 
     # Second fit using first fit results
     popt_refined, pcov_refined = curve_fit(model, x, y, p0=popt)
