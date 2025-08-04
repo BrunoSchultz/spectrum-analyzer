@@ -12,7 +12,7 @@ import scienceplots
 plt.style.use(['science', 'no-latex'])  # prettier scientific style
 
 class FitResult:
-    def __init__(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min=None, x_max=None):
+    def __init__(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, bg_errors, fit_index, x_min=None, x_max=None):
         """
         Create a fitting result for one multi-peak fit.
 
@@ -33,11 +33,15 @@ class FitResult:
         fit_index : int
             Sequential index used for naming (e.g., 1, 2a, 2b)
         """
-        self.df = self._format_result(params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min, x_max)
+        self.df = self._format_result(
+            params, errors, peak_type, n_peaks,
+            bg_type, bg_coeffs, bg_errors, fit_index,
+            x_min, x_max
+        )
         self.x_min = x_min
         self.x_max = x_max
 
-    def _format_result(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min, x_max):
+    def _format_result(self, params, errors, peak_type, n_peaks, bg_type, bg_coeffs, bg_errors, fit_index, x_min, x_max):
         if peak_type in ['gaussian', 'lorentzian']:
             group_size = 3
             columns = ['amp', 'cen', 'wid']
@@ -58,10 +62,16 @@ class FitResult:
                 'peak_id': label,
                 'type': peak_type,
                 'bg_type': bg_type,
-                'bg_coeffs': bg_coeffs,
                 'x_min': x_min,
                 'x_max': x_max
             }
+
+            # Add background parameters and errors
+            n_bg = len(bg_coeffs)
+            for j in range(n_bg):
+                row[f'bg{j}'] = bg_coeffs[j]
+                row[f'd_bg{j}'] = bg_errors[j] if bg_errors is not None else None
+
             # Add parameters
             row.update(dict(zip(columns, param_set)))
             # Add errors with 'd_' prefix
@@ -254,7 +264,24 @@ class Spectrum:
         fit_index = self._fit_count
         self._fit_count += 1
 
-        fit_result = FitResult(popt, errors, peak_type, n_peaks, bg_type, bg_coeffs, fit_index, x_min, x_max)
+        # Determine number of background terms
+        if bg_type == 'constant':
+            n_bg = 1
+        elif bg_type == 'linear':
+            n_bg = 2
+        elif bg_type == 'cubic':
+            n_bg = 4
+        else:
+            n_bg = 0
+
+        bg_errors = errors[-n_bg:] if n_bg > 0 else []
+
+        fit_result = FitResult(
+            popt, errors, peak_type, n_peaks,
+            bg_type, popt[-n_bg:] if n_bg > 0 else [],
+            bg_errors,
+            fit_index, x_min, x_max
+        )
 
         self.add_fitted_peak(fit_result)
 
