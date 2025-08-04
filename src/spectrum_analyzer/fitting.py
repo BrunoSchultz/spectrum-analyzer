@@ -30,7 +30,7 @@ def background(x, kind='constant', coeffs=None):
 def make_model(x, peak_type, n_peaks, bg_type, bg_coeffs):
     def model(x, *params):
         bg = background(x, bg_type, bg_coeffs)
-        result = np.zeros_like(x)
+        result = np.zeros_like(x, dtype=np.float64)
         for i in range(n_peaks):
             if peak_type == 'gaussian':
                 result += gaussian(x, *params[i*3:i*3+3])
@@ -95,7 +95,7 @@ def fit_peaks(x, y, peak_type='gaussian', n_peaks=1, bg_type='constant', bg_coef
                 initial_params += [amp, cen, sigma, gamma]
 
     # First fit
-    popt, pcov = curve_fit(model, x, y, p0=initial_params, maxfev=3000)
+    popt, _ = curve_fit(model, x, y, p0=initial_params, maxfev=3000)
 
     # Second fit using first fit results
     popt_refined, pcov_refined = curve_fit(model, x, y, p0=popt)
