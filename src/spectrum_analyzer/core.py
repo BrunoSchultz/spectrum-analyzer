@@ -61,7 +61,6 @@ class FitResult:
             row = {
                 'peak_id': label,
                 'type': peak_type,
-                'bg_type': bg_type,
                 'x_min': x_min,
                 'x_max': x_max
             }
@@ -102,8 +101,7 @@ class Spectrum:
         self.y = None
         self.filepath = filepath
         self.fitted_peaks = pd.DataFrame(columns=[
-            'peak_id', 'type', 'amp', 'cen', 'wid', 'sigma', 'gamma',
-            'bg_type', 'bg_coeffs'
+            'peak_id', 'type', 'amp', 'cen', 'wid', 'sigma', 'gamma'
         ])
         if filepath:
             self.load_spectrum(filepath)
@@ -225,7 +223,8 @@ class Spectrum:
         fit_result : FitResult
             The result object from a peak fitting.
         """
-        self.fitted_peaks = pd.concat([self.fitted_peaks, fit_result.df], ignore_index=True)
+        df = fit_result.df.drop(columns=['bg_type', 'bg_coeffs'], errors='ignore')
+        self.fitted_peaks = pd.concat([self.fitted_peaks, df], ignore_index=True)
 
     def remove_fitted_peak(self, peak_id):
         """
